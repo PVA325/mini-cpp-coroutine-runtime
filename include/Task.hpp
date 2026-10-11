@@ -2,11 +2,9 @@
 #include <coroutine>
 #include <expected>
 #include <format>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
-// type void will be invalid with my Task, we should use std::monostate instead
 
 #define ASSERT_HANDLE_VALID(handle, context_msg) \
     do { \
@@ -19,56 +17,83 @@ template <typename T>
 class Task;
 template <typename T>
 class TaskPromise;
+template <typename T>
+struct TaskAwaiterBase;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////                  TaskPromise          /////////////////////////////////////
+//////////////////////////              CLASS DECLARATIONS              /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////            TaskPromiseBase<T> CLASS            /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename T>
-class TaskPromise {
+class TaskPromiseBase {
 public:
   struct final_awaiter;
-  // creates Task from this promise
-  // Task handle will be pointed to the beginning of coro frame
-  Task<T> get_return_object();
 
-  // always initial suspend for Spawn, because we want full control, when to start a Task
   std::suspend_always initial_suspend() noexcept { return {}; }
 
-  // if we are final suspended we return final_awaiter to gracefully
-  // process continuation coro
   final_awaiter final_suspend() noexcept { return {}; }
 
-  // if coroutine ends and return value, we just write in Promise
+  ~TaskPromiseBase() = default;
+
+protected:
+  std::coroutine_handle<> continuation_{nullptr};
+
+  template <typename U>
+  friend class Task;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////            TaskPromise<T> CLASS              /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+class TaskPromise : public TaskPromiseBase<T> {
+public:
+  Task<T> get_return_object();
+
   void return_value(const T& val) { res_ = val; }
 
   void unhandled_exception() { res_ = std::unexpected(std::current_exception()); }
 
-  // return stored value, if have, otherwise throw an exception
   T GetReturnedValue() const;
 
   ~TaskPromise() = default;
-private:
+
+protected:
   std::expected<T, std::exception_ptr> res_;
-  std::coroutine_handle<> continuation_{nullptr};
+
+  template <typename U>
+  friend class TaskAwaiterBase;
 };
 
-template <typename T>
-Task<T> TaskPromise<T>::get_return_object() {
-  return Task<T>(std::coroutine_handle<TaskPromise<T>>::from_promise(*this));
-}
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////         TaskPromise<void> SPECIALIZATION        /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename T>
-T TaskPromise<T>::GetReturnedValue() const {
-  if (!res_) {
-    std::rethrow_exception(res_.error());
-  }
-  return res_.value();
-}
+template <>
+class TaskPromise<void> : public TaskPromiseBase<void> {
+public:
+  Task<void> get_return_object();
+  void return_void() {}
+
+  void GetReturnedValue() const {}
+  void unhandled_exception() { exception_ = std::current_exception(); }
+  std::exception_ptr GetException() const { return exception_; }
+
+  ~TaskPromise() = default;
+private:
+  std::exception_ptr exception_;
+
+  template <typename U>
+  friend class TaskAwaiterBase;
+};
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////                  TASK CLASS           /////////////////////////////////////
+/////////////////////////               Task<T> CLASS                   /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename T>
@@ -79,7 +104,6 @@ public:
   Task(const Task&) = delete;
   Task& operator=(const Task&) = delete;
   Task(Task&& other);
-
   Task& operator=(Task&& other);
 
   void Resume();
@@ -102,6 +126,105 @@ private:
 
   friend class TaskPromise<T>;
 };
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////         TaskAwaiterBase<T> CLASS              /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+struct TaskAwaiterBase {
+  TaskAwaiterBase(std::coroutine_handle<TaskPromise<T>> handle): handle_(handle) {}
+
+  bool await_ready() const noexcept { return false; }
+
+  auto await_suspend(std::coroutine_handle<> outer_coro) noexcept -> std::coroutine_handle<>;
+
+  ~TaskAwaiterBase();
+protected:
+  std::coroutine_handle<TaskPromise<T>> handle_;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////       Task<T>::TaskAwaiter CLASS              /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+struct Task<T>::TaskAwaiter : public TaskAwaiterBase<T> {
+  TaskAwaiter(std::coroutine_handle<TaskPromise<T>> handle): TaskAwaiterBase<T>(handle) {}
+
+  T await_resume();
+
+  ~TaskAwaiter() = default;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////     Task<void>::TaskAwaiter SPECIALIZATION    /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <>
+struct Task<void>::TaskAwaiter : public TaskAwaiterBase<void> {
+  TaskAwaiter(std::coroutine_handle<TaskPromise<void>> handle): TaskAwaiterBase<void>(handle) {}
+
+  void await_resume();
+
+  ~TaskAwaiter() = default;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////           METHOD IMPLEMENTATIONS              //////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////        TaskPromiseBase<T> METHODS              /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+struct TaskPromiseBase<T>::final_awaiter {
+  bool await_ready() const noexcept { return false; }
+
+  auto await_suspend(std::coroutine_handle<TaskPromise<T>> last_coro) noexcept
+    -> std::coroutine_handle<>;
+
+  void await_resume() noexcept {}
+};
+
+template <typename T>
+auto TaskPromiseBase<T>::final_awaiter::await_suspend(
+  std::coroutine_handle<TaskPromise<T>> last_coro) noexcept -> std::coroutine_handle<> {
+  if (last_coro.promise().continuation_) {
+    return last_coro.promise().continuation_;
+  }
+  return std::noop_coroutine();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////        TaskPromise<T> METHODS                 /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+T TaskPromise<T>::GetReturnedValue() const {
+  if (!res_) {
+    std::rethrow_exception(res_.error());
+  }
+  return res_.value();
+}
+
+template <typename T>
+Task<T> TaskPromise<T>::get_return_object() {
+  return Task<T>(std::coroutine_handle<TaskPromise<T>>::from_promise(*this));
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////      TaskPromise<void> METHODS                /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Task<void> TaskPromise<void>::get_return_object() {
+  return Task<void>(std::coroutine_handle<TaskPromise<void>>::from_promise(*this));
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////           Task<T> METHODS                     /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename T>
 Task<T>::Task(Task&& other): handle_(std::move(other.handle_)) {
@@ -134,9 +257,6 @@ bool Task<T>::IsDone() const {
 
 template <typename T>
 typename Task<T>::TaskAwaiter Task<T>::operator co_await() && noexcept {
-  // we transfer coro_handle from task to awaiter
-  // so we have an invariant that iether task owns handle
-  // or it has nullptr and Awaiter does, so we destroy handle in Task and Awaiter destructor
   auto h = std::exchange(handle_, nullptr);
   return TaskAwaiter(h);
 }
@@ -149,67 +269,39 @@ Task<T>::~Task() {
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////                  TASK Awaiter           ///////////////////////////////////
+/////////////////////////      TaskAwaiterBase<T> METHODS               /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-template <typename T>
-struct Task<T>::TaskAwaiter {
-  TaskAwaiter(std::coroutine_handle<TaskPromise<T>> handle): handle_(handle) {}
-
-  bool await_ready() const noexcept { return false; }
-
-  auto await_suspend(std::coroutine_handle<> outer_coro) noexcept -> std::coroutine_handle<>;
-
-  T await_resume();
-
-  ~TaskAwaiter();
-private:
-  std::coroutine_handle<TaskPromise<T>> handle_;
-};
 
 template <typename T>
-auto Task<T>::TaskAwaiter::await_suspend(std::coroutine_handle<> outer_coro) noexcept
-  -> std::coroutine_handle<> {
-  // if outer_coro is suspended we put it as continuationuation to handle_
-  // and do symmetric transfer to new coroutine(current - inner)
-  handle_.promise().continuation_ = outer_coro;
-  return handle_;
-}
-
-template <typename T>
-T Task<T>::TaskAwaiter::await_resume() {
-  const auto& res = handle_.promise().res_;
-  if (!res) {
-    throw res.error();
-  }
-  return res.value();
-}
-
-template <typename T>
-Task<T>::TaskAwaiter::~TaskAwaiter() {
+TaskAwaiterBase<T>::~TaskAwaiterBase() {
   if (handle_) {
     handle_.destroy();
   }
 }
 
+template <typename T>
+auto TaskAwaiterBase<T>::await_suspend(std::coroutine_handle<> outer_coro) noexcept
+  -> std::coroutine_handle<> {
+  handle_.promise().continuation_ = outer_coro;
+  return handle_;
+}
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////                  TASK Final Awaiter           ///////////////////////////////////
+/////////////////////////   Task<T>::TaskAwaiter METHODS                /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-template <typename T>
-struct TaskPromise<T>::final_awaiter {
-  bool await_ready() const noexcept { return false; }
-
-  auto await_suspend(std::coroutine_handle<TaskPromise<T>> last_coro) noexcept
-    -> std::coroutine_handle<>;
-
-  void await_resume() noexcept {}
-};
 
 template <typename T>
-auto TaskPromise<T>::final_awaiter::await_suspend(
-  std::coroutine_handle<TaskPromise<T>> last_coro) noexcept -> std::coroutine_handle<> {
-  if (last_coro.promise().continuation_) {
-    return last_coro.promise().continuation_;
+T Task<T>::TaskAwaiter::await_resume() {
+  return this->handle_.promise().GetReturnedValue();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////  Task<void>::TaskAwaiter METHODS              /////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void Task<void>::TaskAwaiter::await_resume() {
+  auto exception_ptr = this->handle_.promise().GetException();
+  if (exception_ptr) {
+    throw exception_ptr;
   }
-  return std::noop_coroutine();
 }
