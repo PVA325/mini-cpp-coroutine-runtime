@@ -90,7 +90,7 @@ public:
   auto Handler() const -> std::coroutine_handle<promise_type> { return handle_; }
 
   struct TaskAwaiter;
-  TaskAwaiter operator co_await() const && noexcept;
+  TaskAwaiter operator co_await() && noexcept;
 
   ~Task();
 
@@ -133,7 +133,7 @@ bool Task<T>::IsDone() const {
 }
 
 template <typename T>
-typename Task<T>::TaskAwaiter Task<T>::operator co_await() const && noexcept {
+typename Task<T>::TaskAwaiter Task<T>::operator co_await() && noexcept {
   // we transfer coro_handle from task to awaiter
   // so we have an invariant that iether task owns handle
   // or it has nullptr and Awaiter does, so we destroy handle in Task and Awaiter destructor
