@@ -35,16 +35,17 @@ public:
 
   // always initial suspend for Spawn, because we want full control, when to start a Task
   std::suspend_always initial_suspend() noexcept { return {}; }
-  // Same for suspend
-  final_awaiter final_suspend() noexcept {
-    return {};
-  }
+
+  // if we are final suspended we return final_awaiter to gracefully
+  // process continuation coro
+  final_awaiter final_suspend() noexcept { return {}; }
 
   // if coroutine ends and return value, we just write in Promise
   void return_value(const T& val) { res_ = val; }
 
   void unhandled_exception() { res_ = std::unexpected(std::current_exception()); }
 
+  // return stored value, if have, otherwise throw an exception
   T GetReturnedValue() const;
 
   ~TaskPromise() = default;
@@ -133,6 +134,9 @@ bool Task<T>::IsDone() const {
 
 template <typename T>
 typename Task<T>::TaskAwaiter Task<T>::operator co_await() const && noexcept {
+  // we transfer coro_handle from task to awaiter
+  // so we have an invariant that iether task owns handle
+  // or it has nullptr and Awaiter does, so we destroy handle in Task and Awaiter destructor
   auto h = std::exchange(handle_, nullptr);
   return TaskAwaiter(h);
 }
@@ -165,6 +169,8 @@ private:
 template <typename T>
 auto Task<T>::TaskAwaiter::await_suspend(std::coroutine_handle<> outer_coro) noexcept
   -> std::coroutine_handle<> {
+  // if outer_coro is suspended we put it as continuationuation to handle_
+  // and do symmetric transfer to new coroutine(current - inner)
   handle_.promise().continuation_ = outer_coro;
   return handle_;
 }
