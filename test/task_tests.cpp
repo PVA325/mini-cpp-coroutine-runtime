@@ -29,6 +29,16 @@ Task<std::int64_t> DeepRecursiveSum(int n) {
   co_return prev + n;
 }
 
+Task<void> VoidLeaf() {
+  co_return;
+}
+
+Task<void> VoidSequence() {
+  co_await VoidLeaf();
+  co_await VoidLeaf();
+  co_return;
+}
+
 }  // namespace
 
 TEST(TaskTest, SimpleResumeAndValue) {
@@ -67,3 +77,22 @@ TEST(TaskTest, DeepRecursiveAwaitDoesNotOverflowStack) {
   EXPECT_EQ(task.GetValue(), expected);
 }
 
+TEST(TaskVoidTest, SimpleResumeAndCompletion) {
+  Task<void> task = VoidLeaf();
+
+  EXPECT_FALSE(task.IsDone());
+
+  task.Resume();
+
+  EXPECT_TRUE(task.IsDone());
+}
+
+TEST(TaskVoidTest, SequentialAwaitOfTemporaryTasks) {
+  Task<void> task = VoidSequence();
+
+  EXPECT_FALSE(task.IsDone());
+
+  task.Resume();
+
+  EXPECT_TRUE(task.IsDone());
+}
