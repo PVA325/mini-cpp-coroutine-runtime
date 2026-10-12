@@ -6,3 +6,5 @@ template <typename T>
 class TaskPromise;
 
 class Scheduler;
+
+class YieldAwaiter;

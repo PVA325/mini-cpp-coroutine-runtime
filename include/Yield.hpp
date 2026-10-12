@@ -1,8 +1,15 @@
-//
-// Created by uladzislau on 12.10.2026.
-//
+#pragma once
+#include "Scheduler.hpp"
 
-#ifndef COROUTINES_RUNTIME_YIELD_HPP
-#define COROUTINES_RUNTIME_YIELD_HPP
+class YieldAwaiter {
+public:
+  bool await_ready() const { return false; }
+  void await_suspend(std::coroutine_handle<> outer);
+  void await_resume() {}
+};
 
-#endif //COROUTINES_RUNTIME_YIELD_HPP
+inline void YieldAwaiter::await_suspend(std::coroutine_handle<> outer) {
+  Scheduler::GetCurrentScheduler()->Schedule(outer);
+}
+
+inline YieldAwaiter Yield() { return {}; }
