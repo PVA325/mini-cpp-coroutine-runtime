@@ -1,11 +1,10 @@
 #pragma once
-#include "common.hpp"
 #include <coroutine>
 #include <expected>
 #include <format>
 #include <stdexcept>
 #include <utility>
-
+#include "Scheduler.hpp"
 
 #define ASSERT_HANDLE_VALID(handle, context_msg) \
     do { \
@@ -131,7 +130,8 @@ struct TaskAwaiterBase {
 
   bool await_ready() const noexcept { return false; }
 
-  auto await_suspend(std::coroutine_handle<> outer_coro) noexcept -> std::coroutine_handle<>;
+  auto await_suspend(std::coroutine_handle<> outer_coro) noexcept
+    -> std::coroutine_handle<>;
 
   ~TaskAwaiterBase();
 protected:
@@ -188,6 +188,10 @@ auto TaskPromiseBase<T>::TaskFinalAwaiter::await_suspend(
   if (last_coro.promise().continuation_) {
     return last_coro.promise().continuation_;
   }
+  Scheduler* shed = Scheduler::GetCurrentScheduler();
+  if (shed) {
+    shed->ScheduleDestroing(last_coro);
+  }
   return std::noop_coroutine();
 }
 
@@ -212,7 +216,7 @@ Task<T> TaskPromise<T>::get_return_object() {
 /////////////////////////      TaskPromise<void> METHODS                /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-Task<void> TaskPromise<void>::get_return_object() {
+inline Task<void> TaskPromise<void>::get_return_object() {
   return Task<void>(std::coroutine_handle<TaskPromise<void>>::from_promise(*this));
 }
 
@@ -293,7 +297,7 @@ T Task<T>::TaskAwaiter::await_resume() {
 /////////////////////////  Task<void>::TaskAwaiter METHODS              /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void Task<void>::TaskAwaiter::await_resume() {
+inline void Task<void>::TaskAwaiter::await_resume() {
   auto exception_ptr = this->handle_.promise().GetException();
   if (exception_ptr) {
     throw exception_ptr;
