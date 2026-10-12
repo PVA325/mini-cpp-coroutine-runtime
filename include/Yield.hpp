@@ -1,0 +1,8 @@
+//
+// Created by uladzislau on 12.10.2026.
+//
+
+#ifndef COROUTINES_RUNTIME_YIELD_HPP
+#define COROUTINES_RUNTIME_YIELD_HPP
+
+#endif //COROUTINES_RUNTIME_YIELD_HPP

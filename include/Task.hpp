@@ -28,11 +28,11 @@ struct TaskAwaiterBase;
 template <typename T>
 class TaskPromiseBase {
 public:
-  struct final_awaiter;
+  struct TaskFinalAwaiter;
 
   std::suspend_always initial_suspend() noexcept { return {}; }
 
-  final_awaiter final_suspend() noexcept { return {}; }
+  TaskFinalAwaiter final_suspend() noexcept { return {}; }
 
   ~TaskPromiseBase() = default;
 
@@ -173,7 +173,7 @@ struct Task<void>::TaskAwaiter : public TaskAwaiterBase<void> {
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename T>
-struct TaskPromiseBase<T>::final_awaiter {
+struct TaskPromiseBase<T>::TaskFinalAwaiter {
   bool await_ready() const noexcept { return false; }
 
   auto await_suspend(std::coroutine_handle<TaskPromise<T>> last_coro) noexcept
@@ -183,7 +183,7 @@ struct TaskPromiseBase<T>::final_awaiter {
 };
 
 template <typename T>
-auto TaskPromiseBase<T>::final_awaiter::await_suspend(
+auto TaskPromiseBase<T>::TaskFinalAwaiter::await_suspend(
   std::coroutine_handle<TaskPromise<T>> last_coro) noexcept -> std::coroutine_handle<> {
   if (last_coro.promise().continuation_) {
     return last_coro.promise().continuation_;
