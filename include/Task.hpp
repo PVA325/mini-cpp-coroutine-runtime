@@ -1,4 +1,5 @@
 #pragma once
+#include "common.hpp"
 #include <coroutine>
 #include <expected>
 #include <format>
@@ -13,16 +14,12 @@
         } \
     } while (0)
 
-template <typename T>
-class Task;
-template <typename T>
-class TaskPromise;
-template <typename T>
-struct TaskAwaiterBase;
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////              CLASS DECLARATIONS              /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+struct TaskAwaiterBase;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////            TaskPromiseBase<T> CLASS            /////////////////////////////
@@ -42,8 +39,7 @@ public:
 protected:
   std::coroutine_handle<> continuation_{nullptr};
 
-  template <typename U>
-  friend class Task;
+  friend class Task<T>;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,8 +62,7 @@ public:
 protected:
   std::expected<T, std::exception_ptr> res_;
 
-  template <typename U>
-  friend class TaskAwaiterBase;
+  friend class TaskAwaiterBase<T>;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -88,8 +83,7 @@ public:
 private:
   std::exception_ptr exception_;
 
-  template <typename U>
-  friend class TaskAwaiterBase;
+  friend class TaskAwaiterBase<void>;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -121,10 +115,10 @@ public:
 private:
   Task(std::coroutine_handle<promise_type> handle): handle_(handle) {}
 
-private:
   std::coroutine_handle<promise_type> handle_;
 
   friend class TaskPromise<T>;
+  friend class Scheduler;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
