@@ -15,6 +15,7 @@ void Scheduler::Run() {
 
     DestroyHandles();
   }
+  DestroyHandles();
   scheduler_ptr_ = nullptr;
 }
 
