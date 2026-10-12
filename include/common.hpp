@@ -8,3 +8,5 @@ class TaskPromise;
 class Scheduler;
 
 class YieldAwaiter;
+template <typename Rep, typename Period>
+class SleepAwaiter;

@@ -2,11 +2,13 @@
 #include <deque>
 #include <common.hpp>
 #include <coroutine>
+#include <asio/io_context.hpp>
 
 class Scheduler {
 public:
   // Add new task, and scheduler owns it(destroys after completion)
   void Spawn(Task<void>&& task);
+
   void Run();
   void Stop();
 
@@ -18,12 +20,17 @@ public:
 private:
   // Add new task, and scheduler DON'T owns it(destroys after completion)
   void Schedule(std::coroutine_handle<> handle);
-  void DestroyHandles();
+  void DestroyReadyHandles();
+  bool NeedCleanPoll();
+  bool NeedDestroyReadyHandlers();
 
   std::deque<std::coroutine_handle<>> handles_queue_;
   std::deque<std::coroutine_handle<>> handles_to_destroy_;
   bool stopped_{false};
+  asio::io_context io_context_;
   inline static Scheduler* scheduler_ptr_{nullptr};
 
   friend class YieldAwaiter;
+  template <typename Rep, typename Period>
+  friend class SleepAwaiter;
 };

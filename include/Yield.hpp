@@ -9,7 +9,11 @@ public:
 };
 
 inline void YieldAwaiter::await_suspend(std::coroutine_handle<> outer) {
-  Scheduler::GetCurrentScheduler()->Schedule(outer);
+  Scheduler* shed = Scheduler::GetCurrentScheduler();
+  if (!shed) {
+    throw std::runtime_error("No current scheduler");
+  }
+  shed->Schedule(outer);
 }
 
 inline YieldAwaiter Yield() { return {}; }
