@@ -22,6 +22,7 @@ target_compile_definitions(task_tests
 target_link_libraries(task_tests
   PRIVATE
     GTest::gtest_main
+    coroutines_runtime_lib
 )
 
 include(GoogleTest)
@@ -49,6 +50,7 @@ target_compile_options(task_tests_no_asan
 target_link_libraries(task_tests_no_asan
   PRIVATE
     GTest::gtest_main
+    coroutines_runtime_lib
 )
 
 gtest_discover_tests(task_tests_no_asan)

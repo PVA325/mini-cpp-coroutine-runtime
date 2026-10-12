@@ -1,5 +1,7 @@
 #include <iostream>
 #include <Task.hpp>
+#include <Scheduler.hpp>
+#include <Yield.hpp>
 
 Task<int> f() {
   co_return 42;
