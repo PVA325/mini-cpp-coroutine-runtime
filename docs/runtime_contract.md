@@ -3,7 +3,7 @@
 Этот документ описывает не пользовательский API, а контракты владения и lifetime-гарантии текущего mini-runtime для coroutine.
 
 Документ составлен на момент коммита:
-963b6b4 (HEAD -> dev) feat(Scheduler.cpp): add Sheduler methods realization; add coroutines_runtime_lib library to cmake
+2a89eab (HEAD -> dev) feat(docs): added contract
 
 Документ фиксирует:
 
@@ -12,7 +12,7 @@
 - когда coroutine стартует, suspend'ится и resume'ится;
 - как `Task`, awaiter'ы и `Scheduler` передают управление друг другу.
 
-Документ не фиксирует будущие контракты для TCP, Asio, `SleepAwaiter`, `SocketAwaiter` и `AsyncSocket`, пока эти части runtime не реализованы.
+Документ также фиксирует целевые контракты для `SleepFor`, `AsyncTCPSocket` и `AsyncTCPAcceptor`. Если текущая реализация еще не полностью следует этим контрактам, это считается задачей для тестов и дальнейшей доработки runtime.
 
 ## Core model
 
@@ -101,6 +101,83 @@ Coroutine frame создается C++ runtime'ом при вызове coroutin
 
 Предусловие: `co_await Yield()` вызывается только внутри активного `Scheduler::Run()`, когда `Scheduler::GetCurrentScheduler()` возвращает валидный scheduler.
 
+### `SleepAwaiter` / `SleepFor`
+
+`SleepFor(duration)` suspend'ит текущую coroutine до истечения указанного времени.
+
+Контракт:
+
+- `SleepFor(duration)` возвращает awaiter для `co_await`;
+- `await_ready()` всегда возвращает `false`;
+- `await_suspend(outer)` регистрирует timer в `io_context`, которым владеет текущий `Scheduler`;
+- callback timer'а не вызывает `outer.resume()` напрямую, а только кладет `outer` обратно в ready queue scheduler'а;
+- `await_resume()` ничего не возвращает;
+- `SleepFor(duration)` гарантирует, что coroutine не будет продолжена раньше, чем timer completion будет получен runtime'ом;
+- точное время resume не гарантируется: coroutine может продолжиться позже из-за очереди scheduler'а, других ready coroutine или задержек `io_context`.
+
+Предусловие: `SleepFor()` вызывается только внутри coroutine, которая исполняется текущим `Scheduler::Run()`.
+
+Lifetime-контракт: timer operation должна жить до completion. Если timer хранится внутри awaiter'а, awaiter обязан пережить suspend. Если timer state вынесен отдельно, этот state должен жить до callback'а.
+
+### `AsyncTCPSocket`
+
+`AsyncTCPSocket` - move-only runtime wrapper над `asio::ip::tcp::socket`.
+
+Контракт:
+
+- владеет `tcp::socket`;
+- связан с конкретным `Scheduler`, потому что socket создан на `io_context` этого scheduler'а;
+- не копируется;
+- может перемещаться только когда на нем нет pending read/write operations;
+- destructor закрывает socket или освобождает его обычным RAII-путем;
+- все async read/write операции возвращают suspended coroutine в ready queue того же scheduler'а;
+- callbacks read/write не resume'ят coroutine напрямую и не уничтожают coroutine frame.
+
+`AsyncReadSome(buffer)`:
+
+- регистрирует one-shot async read operation на socket;
+- coroutine продолжится только после completion этой read operation;
+- `await_resume()` возвращает количество прочитанных байт или сообщает об ошибке;
+- операция может завершиться с `0` bytes или error, если peer закрыл соединение или backend сообщил ошибку;
+- buffer должен жить до completion операции.
+
+`AsyncWriteSome(buffer)`:
+
+- регистрирует one-shot async write operation на socket;
+- coroutine продолжится только после completion этой write operation;
+- `await_resume()` возвращает количество записанных байт или сообщает об ошибке;
+- `AsyncWriteSome` не обязана записывать весь buffer целиком;
+- buffer должен жить до completion операции.
+
+Runtime не гарантирует несколько одновременных read operations на одном `AsyncTCPSocket` и несколько одновременных write operations на одном `AsyncTCPSocket`, пока это явно не реализовано и не покрыто тестами.
+
+### `AsyncTCPAcceptor`
+
+`AsyncTCPAcceptor` - move-only runtime wrapper над `asio::ip::tcp::acceptor`.
+
+Контракт:
+
+- создается внутри активного scheduler context или явно получает scheduler при создании;
+- владеет `tcp::acceptor`, привязанным к `io_context` этого scheduler'а;
+- не копируется;
+- может перемещаться только когда на нем нет pending accept operation;
+- destructor закрывает acceptor или освобождает его обычным RAII-путем;
+- async accept operation возвращает suspended coroutine в ready queue scheduler'а;
+- accepted `AsyncTCPSocket` после successful accept не зависит от lifetime `AsyncTCPAcceptor`, но продолжает зависеть от lifetime `Scheduler`.
+
+`Accept()`:
+
+- выполняет blocking accept и сразу возвращает `AsyncTCPSocket`;
+- не suspend'ит coroutine и не должен использоваться как основной coroutine API;
+- подходит только как низкоуровневый helper/debug path, если caller явно готов блокировать текущий поток scheduler'а.
+
+`AsyncAccept()`:
+
+- целевая coroutine-модель: `co_await acceptor.AsyncAccept()` suspend'ит coroutine до completion accept operation;
+- `await_resume()` возвращает `AsyncTCPSocket` или сообщает об ошибке;
+- callback accept operation не resume'ит coroutine напрямую;
+- `AsyncTCPAcceptor` должен жить до completion pending accept operation.
+
 ## Ownership flows
 
 ### Manual task
@@ -170,6 +247,57 @@ co_await Yield();
 4. Ownership не меняется.
 5. Scheduler позже снова вызывает `resume()` для того же handle.
 
+### Sleep
+
+```cpp
+co_await SleepFor(duration);
+```
+
+Поток управления:
+
+1. Coroutine доходит до `SleepAwaiter`.
+2. `SleepAwaiter::await_suspend()` получает handle текущей coroutine.
+3. Awaiter регистрирует timer в scheduler `io_context`.
+4. Coroutine остается suspended, handle не возвращается в ready queue сразу.
+5. После timer completion callback кладет handle в scheduler ready queue.
+6. Scheduler позже вызывает `resume()` для этого handle.
+7. Ownership coroutine frame не меняется.
+
+### TCP read/write
+
+```cpp
+auto bytes = co_await socket.AsyncReadSome(buffer);
+auto written = co_await socket.AsyncWriteSome(buffer);
+```
+
+Поток управления:
+
+1. Coroutine доходит до socket awaiter.
+2. Awaiter ссылается на `AsyncTCPSocket`, buffer и scheduler.
+3. Awaiter регистрирует read/write operation в socket backend.
+4. Coroutine остается suspended до completion операции.
+5. Callback сохраняет результат операции и кладет coroutine handle в scheduler ready queue.
+6. Scheduler позже resume'ит coroutine.
+7. `await_resume()` возвращает результат или сообщает об ошибке.
+
+Awaiter не владеет socket и buffer. Он предполагает, что referenced objects живут до `await_resume()`.
+
+### TCP accept
+
+```cpp
+AsyncTCPSocket socket = co_await acceptor.AsyncAccept();
+```
+
+Поток управления:
+
+1. Coroutine доходит до accept awaiter.
+2. Awaiter регистрирует accept operation на `AsyncTCPAcceptor`.
+3. Coroutine остается suspended до completion accept operation.
+4. Callback сохраняет success/error и кладет coroutine handle в scheduler ready queue.
+5. Scheduler позже resume'ит coroutine.
+6. `await_resume()` возвращает новый `AsyncTCPSocket` или сообщает об ошибке.
+7. Новый `AsyncTCPSocket` больше не зависит от `AsyncTCPAcceptor`, но зависит от scheduler/io_context.
+
 ## Guarantees
 
 Текущая реализация гарантирует:
@@ -180,7 +308,10 @@ co_await Yield();
 - awaited child coroutine возвращает управление родителю через `continuation_`;
 - awaited child coroutine уничтожается awaiter'ом;
 - scheduler-spawned top-level coroutine уничтожается scheduler'ом после completion;
-- `Yield()` возвращает suspended coroutine в ready queue без передачи ownership.
+- `Yield()` возвращает suspended coroutine в ready queue без передачи ownership;
+- `SleepFor()` не продолжает coroutine раньше timer completion;
+- socket read/write awaiter'ы не продолжают coroutine раньше completion соответствующей I/O operation;
+- accepted socket после successful accept не зависит от lifetime acceptor'а.
 
 ## Preconditions
 
@@ -190,7 +321,13 @@ co_await Yield();
 - `Task<T>::operator co_await()` используется только на rvalue task: temporary task или `std::move(task)`;
 - `Resume()`, `IsDone()`, `GetValue()` и `Promise()` вызываются только на `Task`, который все еще владеет валидным handle;
 - after ownership transfer объект `Task` считается пустым и не должен использоваться как handle owner;
-- `Scheduler::Spawn()` сейчас принимает только `Task<void>` как top-level scheduler task.
+- `Scheduler::Spawn()` сейчас принимает только `Task<void>` как top-level scheduler task;
+- `SleepFor()` требует current scheduler;
+- `AsyncTCPAcceptor` и `AsyncTCPSocket` требуют, чтобы связанный `Scheduler` жил дольше них;
+- `AsyncTCPAcceptor` должен жить до completion pending accept operation;
+- `AsyncTCPSocket` должен жить до completion pending read/write operation;
+- buffers, переданные в read/write operation, должны жить до completion операции;
+- socket/acceptor move допустим только когда нет pending operation на этом объекте.
 
 ## Non-guarantees and current limitations
 
@@ -200,7 +337,10 @@ co_await Yield();
 - cancellation;
 - cleanup всех queued handles после `Stop()`, если scheduler остановлен до полного опустошения очереди;
 - корректное поведение `Yield()` вне scheduler;
-- контракты для `SleepAwaiter`, `SocketAwaiter`, `AsyncSocket` и Asio integration;
+- cleanup pending timers/socket operations при shutdown без отдельной cancellation-модели;
+- несколько одновременных read operations на одном socket;
+- несколько одновременных write operations на одном socket;
+- thread-safe доступ к scheduler/socket/acceptor;
 - стабильный public ABI.
 
 Эти пункты нужно либо явно реализовать, либо оставить как documented limitations.
@@ -213,10 +353,16 @@ co_await Yield();
 - `TaskTest.SequentialAwaitOfTemporaryTasks` - await temporary task и ownership transfer в awaiter;
 - `TaskTest.DeepRecursiveAwaitDoesNotOverflowStack` - symmetric transfer на глубокой цепочке await;
 - `TaskVoidTest.*` - completion для `Task<void>`;
-- `SchedulerTest.*` - ready queue, `Yield()`, round-robin и `Stop()`.
+- `SchedulerTest.*` - ready queue, `Yield()`, round-robin и `Stop()`;
+- будущие `SleepFor` tests - no early resume, resume after timer completion, scheduler waits for timer when ready queue is empty;
+- будущие TCP tests - accept returns independent socket, read/write resume only after operation completion, buffer lifetime assumptions are explicit.
 
 Будущие тесты, которые стоит добавить при закреплении контрактов:
 
 - moved-from `Task` после `co_await` или `Spawn()` пустой и не уничтожает transferred handle;
 - `Scheduler::Stop()` явно очищает или документированно не очищает queued handles;
-- `Yield()` вне scheduler либо запрещен проверкой, либо имеет явное failure behavior.
+- `Yield()` вне scheduler либо запрещен проверкой, либо имеет явное failure behavior;
+- `SleepFor()` вне scheduler имеет явное failure behavior;
+- `AsyncTCPSocket` read/write errors propagate through documented result/exception behavior;
+- `AsyncTCPAcceptor::AsyncAccept()` is asynchronous and does not block scheduler loop;
+- `AsyncTCPAcceptor::Accept()` is blocking and should not be used in scheduler tasks unless blocking is intentional.
