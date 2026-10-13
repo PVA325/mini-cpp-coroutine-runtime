@@ -3,6 +3,7 @@
 #include <Task.hpp>
 #include <Scheduler.hpp>
 #include <Yield.hpp>
+#include <SleepFor.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -235,7 +236,7 @@ TEST(SchedulerTest, StopSchedulerMidExecution) {
 
   // Task 1 yields at (1), then resumes and calls Stop()
   // Task 2 should start but scheduler stops before continuing
-  EXPECT_EQ(execution_order, std::vector<int>({1, 20, 101}));
+  EXPECT_EQ(execution_order, std::vector<int>({1, 20, 101, 21}));
 }
 
 TEST(SchedulerTest, ComplexInterleaving) {

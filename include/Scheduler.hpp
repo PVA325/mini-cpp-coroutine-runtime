@@ -33,4 +33,7 @@ private:
   friend class YieldAwaiter;
   template <typename Rep, typename Period>
   friend class SleepAwaiter;
+  friend class AsyncTCPAcceptor;
+  friend class TCPSocketReadAwaiter;
+  friend class TCPSocketWriteAwaiter;
 };

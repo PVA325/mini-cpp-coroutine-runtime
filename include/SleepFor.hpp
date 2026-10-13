@@ -5,7 +5,7 @@
 template <typename Rep, typename Period>
 class SleepAwaiter {
 public:
-  std::suspend_always await_ready() { return {}; }
+  bool suspend_ready() { return false; };
   void await_suspend(std::coroutine_handle<> outer);
   void await_resume();
 
