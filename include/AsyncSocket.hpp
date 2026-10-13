@@ -35,22 +35,6 @@ private:
   std::expected<size_t, asio::error_code> res_{0};
 };
 
-class AsyncTCPAcceptor {
-public:
-  AsyncTCPAcceptor(const asio::ip::tcp::endpoint& endpoint);
-
-  AsyncTCPAcceptor(const AsyncTCPAcceptor&) = delete;
-  AsyncTCPAcceptor& operator=(const AsyncTCPAcceptor&) = delete;
-  AsyncTCPAcceptor(AsyncTCPAcceptor&& other);
-  AsyncTCPAcceptor& operator=(AsyncTCPAcceptor&& other);
-
-  AsyncTCPSocket Accept();
-
-private:
-  std::optional<asio::ip::tcp::acceptor> acceptor_;
-  Scheduler* shed_;
-};
-
 class AsyncTCPSocket {
 public:
   AsyncTCPSocket(Scheduler* shed, asio::io_context& io_context): socket_(io_context), shed_(shed) {}
@@ -69,3 +53,33 @@ private:
   Scheduler* shed_;
 };
 
+class TCPAcceptorWaiter {
+public:
+  TCPAcceptorWaiter(asio::ip::tcp::acceptor& acceptor, Scheduler* shed):
+    acceptor_(acceptor), shed_(shed) {}
+
+  bool suspend_ready() { return false; }
+  void suspend_wait(std::coroutine_handle<> outer);
+  AsyncTCPSocket suspend_resume();
+private:
+  asio::ip::tcp::acceptor& acceptor_;
+  Scheduler* shed_;
+  std::expected<std::optional<AsyncTCPSocket>, asio::error_code> res_{std::nullopt};
+};
+
+class AsyncTCPAcceptor {
+public:
+  AsyncTCPAcceptor(const asio::ip::tcp::endpoint& endpoint);
+
+  AsyncTCPAcceptor(const AsyncTCPAcceptor&) = delete;
+  AsyncTCPAcceptor& operator=(const AsyncTCPAcceptor&) = delete;
+  AsyncTCPAcceptor(AsyncTCPAcceptor&& other);
+  AsyncTCPAcceptor& operator=(AsyncTCPAcceptor&& other);
+
+  AsyncTCPSocket Accept();
+  TCPAcceptorWaiter AsyncAccept();
+
+private:
+  std::optional<asio::ip::tcp::acceptor> acceptor_;
+  Scheduler* shed_;
+};

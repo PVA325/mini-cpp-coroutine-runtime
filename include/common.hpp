@@ -15,3 +15,4 @@ class AsyncTCPSocket;
 class AsyncTCPAcceptor;
 class TCPSocketReadAwaiter;
 class TCPSocketWriteAwaiter;
+class TCPAcceptorWaiter;

@@ -36,4 +36,5 @@ private:
   friend class AsyncTCPAcceptor;
   friend class TCPSocketReadAwaiter;
   friend class TCPSocketWriteAwaiter;
+  friend class TCPAcceptorWaiter;
 };
