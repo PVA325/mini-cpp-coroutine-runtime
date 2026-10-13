@@ -39,6 +39,26 @@ size_t TCPSocketWriteAwaiter::suspend_resume() {
   throw asio::system_error(res_.error());
 }
 
+void TCPAcceptorWaiter::suspend_wait(std::coroutine_handle<> outer) {
+  res_.emplace(AsyncTCPSocket(shed_, shed_->io_context_));
+
+  auto cb = [&res = this->res_, shed = this->shed_, outer] (const asio::error_code& ec) {
+    if (ec) {
+      res = std::unexpected(ec);
+      return;
+    }
+    shed->Schedule(outer);
+  };
+  acceptor_.async_accept(res_.value()->Socket(), cb);
+}
+
+AsyncTCPSocket TCPAcceptorWaiter::suspend_resume() {
+  if (!res_.has_value()) {
+    throw asio::system_error(res_.error());
+  }
+  return std::move(res_.value().value());
+}
+
 AsyncTCPAcceptor::AsyncTCPAcceptor(const asio::ip::tcp::endpoint& endpoint) {
   shed_ = Scheduler::GetCurrentScheduler();
   if (!shed_) {
