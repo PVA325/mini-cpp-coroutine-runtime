@@ -16,8 +16,11 @@ The default preset writes build files to `build/default`, which is ignored by gi
 
 ## Existing test targets
 
-- `task_tests` builds the normal GoogleTest executable with `ASAN_ENABLED=1` defined for compile-time test selection.
-- `task_tests_no_asan` builds the same test file with `-O2` and without `ASAN_ENABLED`, so deep symmetric-transfer tests that rely on optimization can run separately.
+- `task_tests` builds the Task and Scheduler/Yield test files with `ASAN_ENABLED=1` defined for compile-time test selection.
+- `task_tests_no_asan` builds the Task test file with `-O2` and without `ASAN_ENABLED`, so deep symmetric-transfer tests that rely on optimization can run separately.
+- `ENABLE_PENDING_IO_CONTRACT_TESTS=ON` adds the SleepFor, AsyncTCPAcceptor, and AsyncTCPSocket test files to `task_tests`. These are target-contract tests: the current awaiter method names and missing `AsyncAccept()` definition prevent them from building until the runtime catches up. The option is off by default.
+
+To attempt the pending contract build, run `cmake --preset default -DENABLE_PENDING_IO_CONTRACT_TESTS=ON`, then `cmake --build --preset default`. Restore the normal configuration with `cmake --preset default -DENABLE_PENDING_IO_CONTRACT_TESTS=OFF`.
 
 ## Suggested test organization
 
