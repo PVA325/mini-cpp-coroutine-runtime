@@ -8,9 +8,9 @@ public:
   TCPSocketReadAwaiter(Scheduler* shed, asio::ip::tcp::socket& socket, asio::mutable_buffer buff):
     socket_(socket), buff_(buff), shed_(shed) {}
 
-  bool suspend_ready() { return false; }
-  void suspend_wait(std::coroutine_handle<> outer);
-  size_t suspend_resume();
+  bool await_ready() { return false; }
+  void await_suspend(std::coroutine_handle<> outer);
+  size_t await_resume();
 
 private:
   asio::ip::tcp::socket& socket_;
@@ -24,9 +24,9 @@ public:
   TCPSocketWriteAwaiter(Scheduler* shed, asio::ip::tcp::socket& socket, asio::const_buffer buff):
     socket_(socket), buff_(buff), shed_(shed) {}
 
-  bool suspend_ready() { return false; }
-  void suspend_wait(std::coroutine_handle<> outer);
-  size_t suspend_resume();
+  bool await_ready() { return false; }
+  void await_suspend(std::coroutine_handle<> outer);
+  size_t await_resume();
 
 private:
   asio::ip::tcp::socket& socket_;
@@ -58,9 +58,9 @@ public:
   TCPAcceptorWaiter(asio::ip::tcp::acceptor& acceptor, Scheduler* shed):
     acceptor_(acceptor), shed_(shed) {}
 
-  bool suspend_ready() { return false; }
-  void suspend_wait(std::coroutine_handle<> outer);
-  AsyncTCPSocket suspend_resume();
+  bool await_ready() { return false; }
+  void await_suspend(std::coroutine_handle<> outer);
+  AsyncTCPSocket await_resume();
 private:
   asio::ip::tcp::acceptor& acceptor_;
   Scheduler* shed_;

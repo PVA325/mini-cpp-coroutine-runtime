@@ -1,6 +1,6 @@
 #include "AsyncSocket.hpp"
 
-void TCPSocketReadAwaiter::suspend_wait(std::coroutine_handle<> outer) {
+void TCPSocketReadAwaiter::await_suspend(std::coroutine_handle<> outer) {
   auto cb = [&res = this->res_, shed = this->shed_, outer]
     (const asio::error_code& ec, size_t byte_transfered) {
     if (ec) {
@@ -13,14 +13,14 @@ void TCPSocketReadAwaiter::suspend_wait(std::coroutine_handle<> outer) {
   socket_.async_read_some(buff_, cb);
 }
 
-size_t TCPSocketReadAwaiter::suspend_resume() {
+size_t TCPSocketReadAwaiter::await_resume() {
   if (res_.has_value()) {
     return res_.value();
   }
   throw asio::system_error(res_.error());
 }
 
-void TCPSocketWriteAwaiter::suspend_wait(std::coroutine_handle<> outer) {
+void TCPSocketWriteAwaiter::await_suspend(std::coroutine_handle<> outer) {
   auto cb = [&res = this->res_, shed = this->shed_, outer] (const asio::error_code& ec, size_t byte_writed) {
     if (ec) {
       res = std::unexpected(ec);
@@ -32,14 +32,14 @@ void TCPSocketWriteAwaiter::suspend_wait(std::coroutine_handle<> outer) {
   socket_.async_write_some(buff_, cb);
 }
 
-size_t TCPSocketWriteAwaiter::suspend_resume() {
+size_t TCPSocketWriteAwaiter::await_resume() {
   if (res_.has_value()) {
     return res_.value();
   }
   throw asio::system_error(res_.error());
 }
 
-void TCPAcceptorWaiter::suspend_wait(std::coroutine_handle<> outer) {
+void TCPAcceptorWaiter::await_suspend(std::coroutine_handle<> outer) {
   res_.emplace(AsyncTCPSocket(shed_, shed_->io_context_));
 
   auto cb = [&res = this->res_, shed = this->shed_, outer] (const asio::error_code& ec) {
@@ -52,7 +52,7 @@ void TCPAcceptorWaiter::suspend_wait(std::coroutine_handle<> outer) {
   acceptor_.async_accept(res_.value()->Socket(), cb);
 }
 
-AsyncTCPSocket TCPAcceptorWaiter::suspend_resume() {
+AsyncTCPSocket TCPAcceptorWaiter::await_resume() {
   if (!res_.has_value()) {
     throw asio::system_error(res_.error());
   }
@@ -85,6 +85,8 @@ AsyncTCPSocket AsyncTCPAcceptor::Accept() {
   acceptor_->accept(socket.Socket());
   return socket;
 }
+
+TCPAcceptorWaiter AsyncTCPAcceptor::AsyncAccept() { return {acceptor_.value(), shed_}; }
 
 TCPSocketReadAwaiter AsyncTCPSocket::AsyncReadSome(asio::mutable_buffer buff) {
   return {shed_, socket_, buff};
