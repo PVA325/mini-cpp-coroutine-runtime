@@ -13,6 +13,7 @@ public:
 private:
   std::chrono::duration<Rep, Period> interval_;
   asio::error_code err_;
+  std::optional<asio::steady_timer> timer_;
 };
 
 template <typename Rep, typename Period>
@@ -21,13 +22,16 @@ void SleepAwaiter<Rep, Period>::await_suspend(std::coroutine_handle<> outer) {
   if (!shed) {
     throw std::runtime_error("No current scheduler");
   }
-  asio::steady_timer timer(shed->io_context_, interval_);
-  timer.async_wait([&err = this->err_, shed, outer = std::move(outer)] (const asio::error_code& error) {
+  timer_.emplace(shed->io_context_, interval_);
+  auto cb = [&err = this->err_, shed, outer = std::move(outer)] (const asio::error_code& error) {
     if (error) {
       err = error;
     }
     shed->Schedule(outer);
-  });
+    --shed->context_tasks_;
+  };
+  ++shed->context_tasks_;
+  timer_->async_wait(cb);
 }
 
 template <typename Rep, typename Period>

@@ -5,11 +5,13 @@ void TCPSocketReadAwaiter::await_suspend(std::coroutine_handle<> outer) {
     (const asio::error_code& ec, size_t byte_transfered) {
     if (ec) {
       res = std::unexpected(ec);
-      return;
+    } else {
+      res = byte_transfered;
     }
-    res = byte_transfered;
     shed->Schedule(outer);
+    --shed->context_tasks_;
   };
+  ++shed_->context_tasks_;
   socket_.async_read_some(buff_, cb);
 }
 
@@ -24,11 +26,13 @@ void TCPSocketWriteAwaiter::await_suspend(std::coroutine_handle<> outer) {
   auto cb = [&res = this->res_, shed = this->shed_, outer] (const asio::error_code& ec, size_t byte_writed) {
     if (ec) {
       res = std::unexpected(ec);
-      return;
+    } else {
+      res = byte_writed;
     }
-    res = byte_writed;
     shed->Schedule(outer);
+    --shed->context_tasks_;
   };
+  ++shed_->context_tasks_;
   socket_.async_write_some(buff_, cb);
 }
 
@@ -48,7 +52,9 @@ void TCPAcceptorWaiter::await_suspend(std::coroutine_handle<> outer) {
       return;
     }
     shed->Schedule(outer);
+    --shed->context_tasks_;
   };
+  ++shed_->context_tasks_;
   acceptor_.async_accept(res_.value()->Socket(), cb);
 }
 

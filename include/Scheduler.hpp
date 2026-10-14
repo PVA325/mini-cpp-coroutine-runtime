@@ -28,6 +28,7 @@ private:
   std::deque<std::coroutine_handle<>> handles_to_destroy_;
   bool stopped_{false};
   asio::io_context io_context_;
+  size_t context_tasks_{0};
   inline static Scheduler* scheduler_ptr_{nullptr};
 
   friend class YieldAwaiter;

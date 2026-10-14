@@ -10,16 +10,19 @@ void Scheduler::Spawn(Task<void>&& task) {
 }
 void Scheduler::Run() {
   scheduler_ptr_ = this;
-  while (!handles_queue_.empty() || io_context_.poll()) {
-    std::coroutine_handle<> handle = std::move(handles_queue_.front());
-    handles_queue_.pop_front();
-    handle.resume();
-
+  while (!handles_queue_.empty() || context_tasks_) {
     if (NeedCleanPoll()) {
       io_context_.poll();
+      io_context_.restart();
     }
     if (NeedDestroyReadyHandlers()) {
       DestroyReadyHandles();
+    }
+
+    if (!handles_queue_.empty()) {
+      std::coroutine_handle<> handle = std::move(handles_queue_.front());
+      handles_queue_.pop_front();
+      handle.resume();
     }
   }
   assert(io_context_.poll() == 0); // TODO(MY): write own debbuging macroses
