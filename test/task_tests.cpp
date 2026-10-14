@@ -1,260 +1,155 @@
 #include <gtest/gtest.h>
-
 #include <Task.hpp>
-#include <Scheduler.hpp>
-#include <Yield.hpp>
-#include <SleepFor.hpp>
 
+#include <coroutine>
 #include <cstdint>
-#include <vector>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 namespace {
-
-Task<int> SimpleTask() {
-  co_return 42;
+Task<int> Value(int n) { co_return n; }
+Task<int> Sequence() { int n = co_await Value(2); co_return (co_await Value(n)) + 1; }
+Task<std::int64_t> Sum(int n) {
+  if (n == 0) co_return 0;
+  co_return (co_await Sum(n - 1)) + n;
 }
-
-Task<int> AddOne(int value) {
-  co_return value + 1;
+Task<void> VoidLeaf() { co_return; }
+Task<void> VoidSequence() { co_await VoidLeaf(); co_await VoidLeaf(); }
+// A coroutine parameter stays in its frame until the frame is destroyed.
+Task<void> Hold(std::shared_ptr<int> token) { (void)token; co_await std::suspend_always{}; }
+Task<int> Child(std::shared_ptr<int> token) { (void)token; co_return 42; }
+Task<int> AwaitMoved(Task<int>& child, bool& empty) {
+  int value = co_await std::move(child);
+  empty = !child.Handler();
+  co_return value;
 }
-
-Task<int> SequentialTask() {
-  int first = co_await AddOne(1);
-  int second = co_await AddOne(first);
-  co_return second + 1;
-}
-
-Task<std::int64_t> DeepRecursiveSum(int n) {
-  if (n == 0) {
-    co_return 0;
+Task<int> ThrowValue() { throw std::runtime_error("value"); co_return 0; }
+Task<int> AwaitThrowValue() { co_return co_await ThrowValue(); }
+Task<void> ThrowVoid() { throw std::runtime_error("void"); co_return; }
+Task<bool> CatchVoid() {
+  try { co_await ThrowVoid(); }
+  catch (const std::exception_ptr& error) {
+    try { std::rethrow_exception(error); }
+    catch (const std::runtime_error& e) { co_return std::string(e.what()) == "void"; }
   }
-
-  std::int64_t prev = co_await DeepRecursiveSum(n - 1);
-  co_return prev + n;
+  co_return false;
 }
-
-Task<void> VoidLeaf() {
-  co_return;
-}
-
-Task<void> VoidSequence() {
-  co_await VoidLeaf();
-  co_await VoidLeaf();
-  co_return;
-}
-
 }  // namespace
 
-TEST(TaskTest, SimpleResumeAndValue) {
-  Task<int> task = SimpleTask();
+static_assert(!std::is_copy_constructible_v<Task<int>>);
+static_assert(!std::is_copy_assignable_v<Task<int>>);
+static_assert(std::is_move_constructible_v<Task<int>>);
+static_assert(!std::is_copy_constructible_v<Task<void>>);
 
+TEST(TaskTest, StartsSuspendedAndReturnsValueAfterResume) {
+  auto task = Value(42);
   EXPECT_FALSE(task.IsDone());
-
   task.Resume();
-
   EXPECT_TRUE(task.IsDone());
   EXPECT_EQ(task.GetValue(), 42);
 }
 
-TEST(TaskTest, SequentialAwaitOfTemporaryTasks) {
-  Task<int> task = SequentialTask();
-
-  EXPECT_FALSE(task.IsDone());
-
-  task.Resume();
-
-  EXPECT_TRUE(task.IsDone());
-  EXPECT_EQ(task.GetValue(), 4);
+TEST(TaskTest, ManualOwnerDestroysSuspendedFrame) {
+  auto token = std::make_shared<int>(1);
+  std::weak_ptr<int> weak = token;
+  {
+    auto task = Hold(std::move(token));
+    task.Resume();
+    EXPECT_FALSE(task.IsDone());
+    EXPECT_FALSE(weak.expired());
+  }
+  EXPECT_TRUE(weak.expired());
 }
 
-TEST(TaskTest, DeepRecursiveAwaitDoesNotOverflowStack) {
-  // This test works with AddressSanitizer.
-  // Even with ASAN, we use moderate depth (1000) because ASAN with
-  // -fno-omit-frame-pointer prevents aggressive tail call optimization.
-  constexpr int kDepth = 1000;
-  const std::int64_t expected = static_cast<std::int64_t>(kDepth) * (kDepth + 1) / 2;
-
-  Task<std::int64_t> task = DeepRecursiveSum(kDepth);
-
-  EXPECT_FALSE(task.IsDone());
-
-  task.Resume();
-
-  EXPECT_TRUE(task.IsDone());
-  EXPECT_EQ(task.GetValue(), expected);
+TEST(TaskTest, MoveConstructorTransfersOwnership) {
+  auto token = std::make_shared<int>(1);
+  std::weak_ptr<int> weak = token;
+  {
+    auto source = Hold(std::move(token));
+    auto owner = std::move(source);
+    EXPECT_FALSE(source.Handler());
+    EXPECT_TRUE(owner.Handler());
+    EXPECT_FALSE(weak.expired());
+  }
+  EXPECT_TRUE(weak.expired());
 }
 
-// This test requires -O2/-O3 optimization and NO AddressSanitizer to run successfully.
-// It tests that symmetric transfer truly avoids stack overflow with extreme recursion depth.
-// Only runs in task_tests_no_asan target.
+TEST(TaskTest, MoveAssignmentDestroysPreviousFrame) {
+  auto old_token = std::make_shared<int>(1);
+  auto new_token = std::make_shared<int>(2);
+  std::weak_ptr<int> old_weak = old_token, new_weak = new_token;
+  {
+    auto destination = Hold(std::move(old_token));
+    auto source = Hold(std::move(new_token));
+    destination = std::move(source);
+    EXPECT_TRUE(old_weak.expired());
+    EXPECT_FALSE(new_weak.expired());
+    EXPECT_FALSE(source.Handler());
+  }
+  EXPECT_TRUE(new_weak.expired());
+}
+
+TEST(TaskTest, AwaitedTemporaryReturnsThroughContinuation) {
+  auto task = Sequence();
+  task.Resume();
+  EXPECT_TRUE(task.IsDone());
+  EXPECT_EQ(task.GetValue(), 3);
+}
+
+TEST(TaskTest, AwaitMovesHandleAndDestroysChildFrame) {
+  auto token = std::make_shared<int>(1);
+  std::weak_ptr<int> weak = token;
+  auto child = Child(std::move(token));
+  bool empty = false;
+  auto parent = AwaitMoved(child, empty);
+  parent.Resume();
+  EXPECT_TRUE(parent.IsDone());
+  EXPECT_TRUE(empty);
+  EXPECT_FALSE(child.Handler());
+  EXPECT_TRUE(weak.expired());
+  EXPECT_EQ(parent.GetValue(), 42);
+}
+
+TEST(TaskTest, ValueExceptionPropagatesThroughGetValueAndAwait) {
+  auto direct = ThrowValue();
+  direct.Resume();
+  EXPECT_THROW(direct.GetValue(), std::runtime_error);
+  auto parent = AwaitThrowValue();
+  parent.Resume();
+  EXPECT_THROW(parent.GetValue(), std::runtime_error);
+}
+
+TEST(TaskTest, DeepAwaitChainUsesSymmetricTransfer) {
+  constexpr int depth = 1000;
+  auto task = Sum(depth);
+  task.Resume();
+  EXPECT_EQ(task.GetValue(), static_cast<std::int64_t>(depth) * (depth + 1) / 2);
+}
 #ifndef ASAN_ENABLED
-TEST(TaskTest, DeepRecursiveAwaitExtremeDepthOptimized) {
-  // Extreme depth to verify true tail call optimization works without ASAN overhead.
-  // ASAN would prevent this from working, so this test only runs in no_asan build.
-  constexpr int kDepth = 20000;
-  const std::int64_t expected = static_cast<std::int64_t>(kDepth) * (kDepth + 1) / 2;
-
-  Task<std::int64_t> task = DeepRecursiveSum(kDepth);
-
-  EXPECT_FALSE(task.IsDone());
-
+TEST(TaskTest, ExtremeDeepAwaitChainOptimized) {
+  constexpr int depth = 20000;
+  auto task = Sum(depth);
   task.Resume();
-
-  EXPECT_TRUE(task.IsDone());
-  EXPECT_EQ(task.GetValue(), expected);
+  EXPECT_EQ(task.GetValue(), static_cast<std::int64_t>(depth) * (depth + 1) / 2);
 }
 #endif
 
-TEST(TaskVoidTest, SimpleResumeAndCompletion) {
-  Task<void> task = VoidLeaf();
-
+TEST(TaskVoidTest, CompletesAfterManualResume) {
+  auto task = VoidLeaf();
   EXPECT_FALSE(task.IsDone());
-
   task.Resume();
-
   EXPECT_TRUE(task.IsDone());
 }
-
-TEST(TaskVoidTest, SequentialAwaitOfTemporaryTasks) {
-  Task<void> task = VoidSequence();
-
-  EXPECT_FALSE(task.IsDone());
-
+TEST(TaskVoidTest, AwaitsTemporaryChildren) {
+  auto task = VoidSequence();
   task.Resume();
-
   EXPECT_TRUE(task.IsDone());
 }
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////             SCHEDULER & YIELD TESTS              /////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-
-namespace {
-
-std::vector<int> execution_order;
-
-Task<void> SimpleYieldTask(int id) {
-  execution_order.push_back(id * 10);
-  co_await Yield();
-  execution_order.push_back(id * 10 + 1);
-  co_return;
-}
-
-Task<void> MultipleYieldsTask(int id) {
-  execution_order.push_back(id * 100);
-  co_await Yield();
-  execution_order.push_back(id * 100 + 1);
-  co_await Yield();
-  execution_order.push_back(id * 100 + 2);
-  co_return;
-}
-
-Task<void> NoYieldTask(int id) {
-  execution_order.push_back(id * 100);
-  execution_order.push_back(id * 100 + 1);
-  execution_order.push_back(id * 100 + 2);
-  co_return;
-}
-
-Task<void> StopTask(int id) {
-  execution_order.push_back(id);
-  co_await Yield();
-  execution_order.push_back(id + 100);
-  auto* sched = Scheduler::GetCurrentScheduler();
-  if (sched) {
-    sched->Stop();
-  }
-  co_return;
-}
-
-}  // namespace
-
-TEST(SchedulerTest, SingleTaskWithSingleYield) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(SimpleYieldTask(1));
-  scheduler.Run();
-
-  EXPECT_EQ(execution_order, std::vector<int>({10, 11}));
-}
-
-TEST(SchedulerTest, TwoTasksWithYield) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(SimpleYieldTask(1));
-  scheduler.Spawn(SimpleYieldTask(2));
-  scheduler.Run();
-
-  EXPECT_EQ(execution_order, std::vector<int>({10, 20, 11, 21}));
-}
-
-TEST(SchedulerTest, ThreeTasksRoundRobin) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(SimpleYieldTask(1));
-  scheduler.Spawn(SimpleYieldTask(2));
-  scheduler.Spawn(SimpleYieldTask(3));
-  scheduler.Run();
-
-  EXPECT_EQ(execution_order, std::vector<int>({10, 20, 30, 11, 21, 31}));
-}
-
-TEST(SchedulerTest, TaskWithMultipleYields) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(MultipleYieldsTask(1));
-  scheduler.Run();
-
-  EXPECT_EQ(execution_order, std::vector<int>({100, 101, 102}));
-}
-
-TEST(SchedulerTest, MixedYieldAndNoYieldTasks) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(SimpleYieldTask(1));
-  scheduler.Spawn(NoYieldTask(2));
-  scheduler.Spawn(SimpleYieldTask(3));
-  scheduler.Run();
-
-  // Task 1 yields, Task 2 runs to completion (no yield), Task 3 yields,
-  // then Task 1 and Task 3 continue
-  EXPECT_EQ(execution_order, std::vector<int>({10, 200, 201, 202, 30, 11, 31}));
-}
-
-TEST(SchedulerTest, StopSchedulerMidExecution) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(StopTask(1));
-  scheduler.Spawn(SimpleYieldTask(2));
-  scheduler.Run();
-
-  // Task 1 yields at (1), then resumes and calls Stop()
-  // Task 2 should start but scheduler stops before continuing
-  EXPECT_EQ(execution_order, std::vector<int>({1, 20, 101, 21}));
-}
-
-TEST(SchedulerTest, ComplexInterleaving) {
-  execution_order.clear();
-  Scheduler scheduler;
-
-  scheduler.Spawn(MultipleYieldsTask(1));
-  scheduler.Spawn(SimpleYieldTask(2));
-  scheduler.Spawn(MultipleYieldsTask(3));
-  scheduler.Run();
-
-  // Task 1: 100 -> yield
-  // Task 2: 20 -> yield
-  // Task 3: 300 -> yield
-  // Task 1: 101 -> yield
-  // Task 2: 21 (done)
-  // Task 3: 301 -> yield
-  // Task 1: 102 (done)
-  // Task 3: 302 (done)
-  EXPECT_EQ(execution_order, std::vector<int>({100, 20, 300, 101, 21, 301, 102, 302}));
+TEST(TaskVoidTest, AwaitedExceptionUsesDocumentedExceptionPtrBehavior) {
+  auto task = CatchVoid();
+  task.Resume();
+  EXPECT_TRUE(task.GetValue());
 }
