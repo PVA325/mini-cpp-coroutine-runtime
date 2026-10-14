@@ -49,7 +49,6 @@ void TCPAcceptorWaiter::await_suspend(std::coroutine_handle<> outer) {
   auto cb = [&res = this->res_, shed = this->shed_, outer] (const asio::error_code& ec) {
     if (ec) {
       res = std::unexpected(ec);
-      return;
     }
     shed->Schedule(outer);
     --shed->context_tasks_;
