@@ -1,6 +1,10 @@
 #include "Scheduler.hpp"
 #include "Task.hpp"
 
+Scheduler* Scheduler::scheduler_ptr_ = nullptr;
+
+Scheduler* Scheduler::GetCurrentScheduler() { return scheduler_ptr_; }
+
 void Scheduler::Spawn(Task<void>&& task) {
   if (stopped_) {
     return;

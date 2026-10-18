@@ -5,10 +5,9 @@
 
 class TCPSocketReadAwaiter {
 public:
-  TCPSocketReadAwaiter(Scheduler* shed, asio::ip::tcp::socket& socket, asio::mutable_buffer buff):
-    socket_(socket), buff_(buff), shed_(shed) {}
+  TCPSocketReadAwaiter(Scheduler* shed, asio::ip::tcp::socket& socket, asio::mutable_buffer buff);
 
-  bool await_ready() { return false; }
+  bool await_ready();
   void await_suspend(std::coroutine_handle<> outer);
   size_t await_resume();
 
@@ -21,10 +20,9 @@ private:
 
 class TCPSocketWriteAwaiter {
 public:
-  TCPSocketWriteAwaiter(Scheduler* shed, asio::ip::tcp::socket& socket, asio::const_buffer buff):
-    socket_(socket), buff_(buff), shed_(shed) {}
+  TCPSocketWriteAwaiter(Scheduler* shed, asio::ip::tcp::socket& socket, asio::const_buffer buff);
 
-  bool await_ready() { return false; }
+  bool await_ready();
   void await_suspend(std::coroutine_handle<> outer);
   size_t await_resume();
 
@@ -37,17 +35,17 @@ private:
 
 class AsyncTCPSocket {
 public:
-  AsyncTCPSocket(Scheduler* shed, asio::io_context& io_context): socket_(io_context), shed_(shed) {}
+  AsyncTCPSocket(Scheduler* shed, asio::io_context& io_context);
 
   AsyncTCPSocket(const AsyncTCPSocket&) = delete;
   AsyncTCPSocket& operator=(const AsyncTCPSocket&) = delete;
-  AsyncTCPSocket(AsyncTCPSocket&& other) = default;
-  AsyncTCPSocket& operator=(AsyncTCPSocket&& other) = default;
+  AsyncTCPSocket(AsyncTCPSocket&& other) noexcept;
+  AsyncTCPSocket& operator=(AsyncTCPSocket&& other);
 
   TCPSocketReadAwaiter AsyncReadSome(asio::mutable_buffer buff);
   TCPSocketWriteAwaiter AsyncWriteSome(asio::const_buffer buff);
 
-  asio::ip::tcp::socket& Socket() { return socket_; }
+  asio::ip::tcp::socket& Socket();
 
 private:
   asio::ip::tcp::socket socket_;
@@ -56,10 +54,9 @@ private:
 
 class TCPAcceptorWaiter {
 public:
-  TCPAcceptorWaiter(asio::ip::tcp::acceptor& acceptor, Scheduler* shed):
-    acceptor_(acceptor), shed_(shed) {}
+  TCPAcceptorWaiter(asio::ip::tcp::acceptor& acceptor, Scheduler* shed);
 
-  bool await_ready() { return false; }
+  bool await_ready();
   void await_suspend(std::coroutine_handle<> outer);
   AsyncTCPSocket await_resume();
 private:

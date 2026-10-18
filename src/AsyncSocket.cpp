@@ -1,5 +1,11 @@
 #include "AsyncSocket.hpp"
 
+TCPSocketReadAwaiter::TCPSocketReadAwaiter(
+  Scheduler* shed, asio::ip::tcp::socket& socket, asio::mutable_buffer buff):
+  socket_(socket), buff_(buff), shed_(shed) {}
+
+bool TCPSocketReadAwaiter::await_ready() { return false; }
+
 void TCPSocketReadAwaiter::await_suspend(std::coroutine_handle<> outer) {
   auto cb = [&res = this->res_, shed = this->shed_, outer]
     (const asio::error_code& ec, size_t byte_transfered) {
@@ -22,6 +28,12 @@ size_t TCPSocketReadAwaiter::await_resume() {
   throw asio::system_error(res_.error());
 }
 
+TCPSocketWriteAwaiter::TCPSocketWriteAwaiter(
+  Scheduler* shed, asio::ip::tcp::socket& socket, asio::const_buffer buff):
+  socket_(socket), buff_(buff), shed_(shed) {}
+
+bool TCPSocketWriteAwaiter::await_ready() { return false; }
+
 void TCPSocketWriteAwaiter::await_suspend(std::coroutine_handle<> outer) {
   auto cb = [&res = this->res_, shed = this->shed_, outer] (const asio::error_code& ec, size_t byte_writed) {
     if (ec) {
@@ -43,6 +55,11 @@ size_t TCPSocketWriteAwaiter::await_resume() {
   throw asio::system_error(res_.error());
 }
 
+TCPAcceptorWaiter::TCPAcceptorWaiter(asio::ip::tcp::acceptor& acceptor, Scheduler* shed):
+  acceptor_(acceptor), shed_(shed) {}
+
+bool TCPAcceptorWaiter::await_ready() { return false; }
+
 void TCPAcceptorWaiter::await_suspend(std::coroutine_handle<> outer) {
   res_.emplace(AsyncTCPSocket(shed_, shed_->io_context_));
 
@@ -63,6 +80,15 @@ AsyncTCPSocket TCPAcceptorWaiter::await_resume() {
   }
   return std::move(res_.value().value());
 }
+
+AsyncTCPSocket::AsyncTCPSocket(Scheduler* shed, asio::io_context& io_context):
+  socket_(io_context), shed_(shed) {}
+
+AsyncTCPSocket::AsyncTCPSocket(AsyncTCPSocket&& other) noexcept = default;
+
+AsyncTCPSocket& AsyncTCPSocket::operator=(AsyncTCPSocket&& other) = default;
+
+asio::ip::tcp::socket& AsyncTCPSocket::Socket() { return socket_; }
 
 AsyncTCPAcceptor::AsyncTCPAcceptor(const asio::ip::tcp::endpoint& endpoint) {
   shed_ = Scheduler::GetCurrentScheduler();

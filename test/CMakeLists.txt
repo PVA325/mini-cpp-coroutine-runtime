@@ -5,11 +5,12 @@
 #######################                task_tests (with ASAN)               #########################
 #####################################################################################################
 
-SET(ENABLE_PENDING_IO_CONTRACT_TESTS ON)
-
 add_executable(task_tests
   task_tests.cpp
   scheduler_yield_tests.cpp
+  sleep_for_tests.cpp
+  async_tcp_acceptor_tests.cpp
+  async_tcp_socket_tests.cpp
 )
 
 target_include_directories(task_tests
@@ -57,14 +58,3 @@ target_link_libraries(task_tests_no_asan
 )
 
 gtest_discover_tests(task_tests_no_asan)
-
-# These files express target contracts. The current runtime still lacks the
-# required co_await methods and the AsyncAccept() definition.
-option(ENABLE_PENDING_IO_CONTRACT_TESTS "Build pending SleepFor and TCP contract tests" OFF)
-if(ENABLE_PENDING_IO_CONTRACT_TESTS)
-  target_sources(task_tests PRIVATE
-    sleep_for_tests.cpp
-    async_tcp_acceptor_tests.cpp
-    async_tcp_socket_tests.cpp
-  )
-endif()

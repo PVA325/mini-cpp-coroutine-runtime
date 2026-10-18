@@ -14,7 +14,7 @@ public:
 
   // if called from coro that is executed in sheduler -> returns its ptr
   // otherwise if it is called outside, returns nullptr
-  static Scheduler *GetCurrentScheduler() { return  scheduler_ptr_; }
+  static Scheduler* GetCurrentScheduler();
 
   void ScheduleDestroing(std::coroutine_handle<> handle);
 private:
@@ -29,7 +29,7 @@ private:
   bool stopped_{false};
   asio::io_context io_context_;
   size_t context_tasks_{0};
-  inline static Scheduler* scheduler_ptr_{nullptr};
+  static Scheduler* scheduler_ptr_;
 
   friend class YieldAwaiter;
   template <typename Rep, typename Period>

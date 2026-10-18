@@ -1,6 +1,8 @@
 add_library(coroutines_runtime_lib STATIC
   Scheduler.cpp
   AsyncSocket.cpp
+  Task.cpp
+  Yield.cpp
 )
 
 target_include_directories(coroutines_runtime_lib

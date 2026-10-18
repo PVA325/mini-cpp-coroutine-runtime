@@ -72,11 +72,11 @@ template <>
 class TaskPromise<void> : public TaskPromiseBase<void> {
 public:
   Task<void> get_return_object();
-  void return_void() {}
+  void return_void();
 
-  void GetReturnedValue() const {}
-  void unhandled_exception() { exception_ = std::current_exception(); }
-  std::exception_ptr GetException() const { return exception_; }
+  void GetReturnedValue() const;
+  void unhandled_exception();
+  std::exception_ptr GetException() const;
 
   ~TaskPromise() = default;
 private:
@@ -213,14 +213,6 @@ Task<T> TaskPromise<T>::get_return_object() {
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////      TaskPromise<void> METHODS                /////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-
-inline Task<void> TaskPromise<void>::get_return_object() {
-  return Task<void>(std::coroutine_handle<TaskPromise<void>>::from_promise(*this));
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////           Task<T> METHODS                     /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -291,15 +283,4 @@ auto TaskAwaiterBase<T>::await_suspend(std::coroutine_handle<> outer_coro) noexc
 template <typename T>
 T Task<T>::TaskAwaiter::await_resume() {
   return this->handle_.promise().GetReturnedValue();
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////  Task<void>::TaskAwaiter METHODS              /////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-
-inline void Task<void>::TaskAwaiter::await_resume() {
-  auto exception_ptr = this->handle_.promise().GetException();
-  if (exception_ptr) {
-    throw exception_ptr;
-  }
 }
