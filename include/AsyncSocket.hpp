@@ -48,6 +48,7 @@ public:
   TCPSocketWriteAwaiter AsyncWriteSome(asio::const_buffer buff);
 
   asio::ip::tcp::socket& Socket() { return socket_; }
+
 private:
   asio::ip::tcp::socket socket_;
   Scheduler* shed_;
